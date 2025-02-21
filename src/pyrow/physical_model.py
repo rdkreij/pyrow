@@ -13,11 +13,13 @@ class BoatProperties:
     area_water_side: float
     area_air_front: float
     area_air_side: float
+    area_anchor: float
     drag_coefficient_air: float
     drag_coefficient_water: float
     speed_perfect: float
     force_row: float = field(init=False)
     wind_correction: None | dict = None
+    # min_anchor_speed: None | float = None
 
     def __post_init__(self):
         self.force_row = calculate_row_force_perfect_conditions(
@@ -85,11 +87,19 @@ def calculate_drag_air(
     effective_area = calculate_effective_area(
         boat_properties.area_air_front, boat_properties.area_air_side, heading_reference
     )
-    drag_force = (
-        0.5 * boat_properties.drag_coefficient_air * speed_relative**2 * effective_area
-    )
-    drag_parallel = drag_force * np.cos(heading_reference)
-    return drag_parallel * np.array([np.cos(orientation), np.sin(orientation)])
+    # drag_force = (
+    #     0.5 * 1.225 * boat_properties.drag_coefficient_air * speed_relative**2 * effective_area
+    # )
+    # drag_parallel = drag_force * np.cos(heading_reference)
+
+    # return drag_parallel * np.array([np.cos(orientation), np.sin(orientation)])
+    return (
+        0.5
+        * 1.225
+        * boat_properties.drag_coefficient_air
+        * speed_relative**2
+        * effective_area
+    ) * np.array([np.cos(heading_relative), np.sin(heading_relative)])
 
 
 def calculate_drag_water(
@@ -97,6 +107,7 @@ def calculate_drag_water(
     V_water: np.ndarray,
     V_boat: np.ndarray,
     orientation: float,
+    force_anchor: bool = False,
 ) -> np.ndarray:
     V_relative = V_water - V_boat
     speed_relative = np.linalg.norm(V_relative)
@@ -107,13 +118,32 @@ def calculate_drag_water(
         boat_properties.area_water_side,
         heading_reference,
     )
+
+    # Drag due to boat drag
     drag_force = (
         0.5
+        * 1025
         * boat_properties.drag_coefficient_water
         * speed_relative**2
         * effective_area
-    )
-    return drag_force * np.array([np.cos(heading_relative), np.sin(heading_relative)])
+    ) * np.array([np.cos(heading_relative), np.sin(heading_relative)])
+
+    # # Drag due to anchor drag
+    # if boat_properties.min_anchor_speed is not None:
+    #     boat_par_speed, _ = decompose_vector(V_boat, orientation)
+    #     if boat_par_speed < boat_properties.min_anchor_speed:
+    #         force_anchor = True
+
+    if force_anchor:
+        drag_force += (
+            0.5
+            * 1025
+            * boat_properties.drag_coefficient_water
+            * speed_relative**2
+            * boat_properties.area_anchor
+        ) * np.array([np.cos(heading_relative), np.sin(heading_relative)])
+
+    return drag_force
 
 
 def is_wind_in_row_zone(
@@ -123,24 +153,38 @@ def is_wind_in_row_zone(
         (v_perp_air) ** 2
     ) / window_perp**2 <= 1
 
+
 def decompose_vector(vec, angle):
-    parallel_mag = np.dot(vec, [np.cos(angle), np.sin(angle)])
-    perpendicular_mag = np.linalg.norm(vec) * np.sqrt(1 - (parallel_mag / np.linalg.norm(vec))**2)
-    return parallel_mag, perpendicular_mag
+    if np.allclose(vec, 0):
+        parallel_mag = 0
+        perpendicular_mag = 0
+        return parallel_mag, perpendicular_mag
+    else:
+        parallel_mag = np.dot(vec, [np.cos(angle), np.sin(angle)])
+        perpendicular_mag = np.linalg.norm(vec) * np.sqrt(
+            1 - (parallel_mag / np.linalg.norm(vec)) ** 2
+        )
+        return parallel_mag, perpendicular_mag
+
 
 def calculate_row_force(
     boat_properties: BoatProperties, V_air: np.ndarray, orientation: float, row: bool
 ) -> np.ndarray:
+    if not row:
+        return np.zeros(2)
+
+    row_in_wind = True
     if boat_properties.wind_correction is not None:
         v_par_air, v_perp_air = decompose_vector(V_air, orientation)
-        row_in_wind = is_wind_in_row_zone(v_par_air, v_perp_air,**boat_properties.wind_correction)
-
-    if row and row_in_wind:
-        return boat_properties.force_row * np.array(
-            [np.cos(orientation), np.sin(orientation)]
+        row_in_wind = is_wind_in_row_zone(
+            v_par_air, v_perp_air, **boat_properties.wind_correction
         )
-    else:
-        return np.array([0,0])
+
+    return (
+        boat_properties.force_row * np.array([np.cos(orientation), np.sin(orientation)])
+        if row_in_wind
+        else np.zeros(2)
+    )
 
 
 def calculate_total_force(
@@ -150,11 +194,13 @@ def calculate_total_force(
     orientation: float,
     row: bool,
     boat_properties: BoatProperties,
+    force_anchor: bool = False,
 ) -> np.ndarray:
     drag_air = calculate_drag_air(boat_properties, V_air, V_boat, orientation)
-    drag_water = calculate_drag_water(boat_properties, V_water, V_boat, orientation)
+    drag_water = calculate_drag_water(
+        boat_properties, V_water, V_boat, orientation, force_anchor
+    )
     force_row = calculate_row_force(boat_properties, V_air, orientation, row)
-    # print(f'{V_boat=},{force_row + drag_air + drag_water}')
     return force_row + drag_air + drag_water
 
 
@@ -164,19 +210,14 @@ def solve_boat_velocity(
     V_air: np.ndarray,
     orientation: float,
     row: bool,
+    force_anchor: bool = False,
     tol: float = 1e-6,
 ) -> tuple[float, float]:
     V_boat_guess = V_water + boat_properties.speed_perfect * np.array(
         [np.cos(orientation), np.sin(orientation)]
     )
 
-    args = (
-        V_water,
-        V_air,
-        orientation,
-        row,
-        boat_properties,
-    )
+    args = (V_water, V_air, orientation, row, boat_properties, force_anchor)
 
     methods = ["hybr", "lm", "diagbroyden"]
     for method in methods:
@@ -235,7 +276,7 @@ if __name__ == "__main__":
         drag_coefficient_air=0.4,
         drag_coefficient_water=20,
         speed_perfect=2,
-        wind_correction={'correction_par':1, 'window_par':3, 'window_perp':1},
+        wind_correction={"correction_par": 1, "window_par": 3, "window_perp": 1},
     )
     print(boat_properties)
 
