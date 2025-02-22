@@ -33,8 +33,7 @@ class BoatProperties:
 
 @dataclass
 class BoatState:
-    lon: float
-    lat: float
+    coords: tuple[float]
     time: np.datetime64
     orientation: float = 0.0
     V_boat: np.ndarray = field(default_factory=lambda: np.zeros(2))
@@ -235,29 +234,23 @@ def solve_boat_velocity(
     return V_boat_solution.x
 
 
-def displace_lon_lat_geopy(lon, lat, x, y):
-    start = (lat, lon)
-    # Move North
-    new_point_north = geodesic(meters=y).destination(start, 0)
-    new_lat, new_lon = new_point_north.latitude, new_point_north.longitude
-
-    # Move East
-    final_point = geodesic(meters=x).destination((new_lat, new_lon), 90)
-    return final_point.latitude, final_point.longitude
+def displace_coordinates_geopy(coords, x, y):
+    new_point_north = geodesic(meters=y).destination(coords, 0)
+    final_point = geodesic(meters=x).destination(new_point_north, 90)
+    return (final_point.latitude, final_point.longitude)
 
 
 def move_boat(boat_state: BoatState, time_step: float) -> BoatState:
     x = boat_state.V_boat[0] * time_step
     y = boat_state.V_boat[1] * time_step
-    new_lat, new_lon = displace_lon_lat_geopy(boat_state.lon, boat_state.lat, x, y)
+    new_coords = displace_coordinates_geopy(boat_state.coords, x, y)
     new_time = boat_state.time + np.timedelta64(int(time_step), "s")
-    return BoatState(lon=new_lon, lat=new_lat, time=new_time)
+    return BoatState(coords=new_coords, time=new_time)
 
 
 if __name__ == "__main__":
     boat_state = BoatState(
-        lon=10,
-        lat=20,
+        coords=(10, 20),
         orientation=0,
         time=np.datetime64("now"),
         V_boat=np.array([0, 0]),
