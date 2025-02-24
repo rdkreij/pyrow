@@ -27,7 +27,10 @@ class RouteSimulation:
         ds_air: xr.Dataset,
         ds_water: xr.Dataset,
         algorithm: str = "single",
+        algorithm_options: dict | None = None,
         interpolation: str = "nearest",
+        filter: str | None = None,
+        filter_options: dict | None = None,
         finish_time_step_scale: float | None = None,
     ):
         self.boat_properties = boat_properties
@@ -39,8 +42,17 @@ class RouteSimulation:
         self.ds_air = ds_air
         self.ds_water = ds_water
         self.algortihm = algorithm
+        self.algortihm_options = algorithm_options
         self.interpolation = interpolation
+        self.filter = filter
+        self.filter_options = filter_options
         self.finish_time_step_scale = finish_time_step_scale
+
+        if self.filter_options is None:
+            self.filter_options = {}
+
+        if self.algortihm_options is None:
+            self.algortihm_options = {}
 
         if self.finish_time_step_scale is not None:
             self.finish_zone = (
@@ -52,7 +64,9 @@ class RouteSimulation:
             self.finish_zone = None
 
         self.store_boat_info = self.run_simulation()
-        self.fastest_route_info = self.find_fastest_route_info(self.store_boat_info)
+        self.fastest_route_info = find_fastest_route_info(
+            self.store_boat_info, self.target_coords
+        )
         if self.interpolation != "zero":
             for ds in [self.ds_air, self.ds_water]:
                 wheather_interpolation.process_dataset(
@@ -83,48 +97,21 @@ class RouteSimulation:
         )
         i = 0
         while np.all(target_distance > self.min_distance_target):
-            new_list_boat_info = []
             time_step_instance = self.calculate_time_step_flex(target_distance)
-            print(time_step_instance)
-            id = 0
-            for info in list_boat_info:
-                if self.algortihm == "single":
-                    info.id = id
-                    info.state.orientation = spatial_operations.bearing_east_rad(
-                        info.state.coords, self.target_coords
-                    )
-                    info.state.V_air = wheather_interpolation.get_velocity_from_dataset(
-                        self.ds_air,
-                        info.state.time,
-                        info.state.coords,
-                        self.interpolation,
-                    )
-                    info.state.V_water = (
-                        wheather_interpolation.get_velocity_from_dataset(
-                            self.ds_water,
-                            info.state.time,
-                            info.state.coords,
-                            self.interpolation,
-                        )
-                    )
-                    info.state.row = True
-                    info.state.V_boat = physical_model.solve_boat_velocity(
-                        self.boat_properties,
-                        info.state.V_water,
-                        info.state.V_air,
-                        info.state.orientation,
-                        row=info.state.row,
-                    )
-                    new_boat_state = physical_model.move_boat(
-                        info.state, time_step_instance
-                    )
-                    new_info = BoatSimInfo(new_boat_state, parent_id=id)
-
-                    id += 1
-                new_list_boat_info.append(new_info)
-            list_boat_info = new_list_boat_info
-
+            if self.algortihm == "single":
+                list_boat_info = self.update_boat_info_algorithm_single(
+                    list_boat_info, time_step_instance
+                )
+            if self.algortihm == "multi":
+                list_boat_info = self.update_boat_info_algorithm_single(
+                    list_boat_info, time_step_instance, **self.algortihm_options
+                )
             store_boat_info.append(list_boat_info)
+
+            if self.filter == "radial":
+                store_boat_info = self.spatial_filter_radial_list(
+                    store_boat_info, **self.filter_options
+                )
 
             list_coords = [info.state.coords for info in list_boat_info]
             target_distance = calculate_target_distance_list(
@@ -133,34 +120,78 @@ class RouteSimulation:
             i += 1
         return store_boat_info
 
-    def find_fastest_route_info(self, store_boat_info: list[list[BoatSimInfo]]):
-        idx_time_last = len(store_boat_info) - 1
-        info_list_end = store_boat_info[idx_time_last]
-        list_coords = [info.state.coords for info in info_list_end]
-        target_distance = calculate_target_distance_list(
-            list_coords, self.target_coords
-        )
-        idx_winner = np.argmin(target_distance)
-        info_winner = info_list_end[idx_winner]
-        parent_id = info_winner.parent_id
+    def update_boat_info_algorithm_single(
+        self, list_boat_info: list[BoatSimInfo], time_step_instance: float
+    ):
+        new_list_boat_info = []
+        id = 0
+        for info in list_boat_info:
+            info.id = id
+            info.state.orientation = spatial_operations.bearing_east_rad(
+                info.state.coords, self.target_coords
+            )
+            info.state.V_air = wheather_interpolation.get_velocity_from_dataset(
+                self.ds_air,
+                info.state.time,
+                info.state.coords,
+                self.interpolation,
+            )
+            info.state.V_water = wheather_interpolation.get_velocity_from_dataset(
+                self.ds_water,
+                info.state.time,
+                info.state.coords,
+                self.interpolation,
+            )
+            info.state.row = True
+            info.state.V_boat = physical_model.solve_boat_velocity(
+                self.boat_properties,
+                info.state.V_water,
+                info.state.V_air,
+                info.state.orientation,
+                row=info.state.row,
+            )
+            new_boat_state = physical_model.move_boat(info.state, time_step_instance)
+            new_info = BoatSimInfo(new_boat_state, parent_id=id)
 
-        fastest_route_info = [info_winner]
-        for idx_time in range(idx_time_last - 1, -1, -1):
-            info_list = store_boat_info[idx_time]
-            id_arr = np.array([info.id for info in info_list])
-            idx_parent = np.where(id_arr == parent_id)[0][0]
-            info_parent = info_list[idx_parent]
-            fastest_route_info.append(info_parent)
+            id += 1
+            new_list_boat_info.append(new_info)
+        return new_list_boat_info
 
-        fastest_route_info = fastest_route_info[::-1]
+    def update_boat_info_algorithm_multi(
+        self, list_boat_info: list[BoatSimInfo], time_step_instance: float
+    ):
+        # TODO To be implemented, also add algorithm options (see in class)
+        pass
 
-        return fastest_route_info
+    def spatial_filter_radial_list(
+        self, store_boat_info: list[BoatSimInfo]
+    ) -> list[BoatSimInfo]:
+        # TODO To be implemented, also add filter options (see in class)
+        pass
 
 
-def spatial_filter_radial_list(
-    list_coords: list[tuple[float]], target_coords: tuple[float]
-) -> list[tuple[float]]:
-    pass
+def find_fastest_route_info(
+    store_boat_info: list[list[BoatSimInfo]], target_coords=tuple[float]
+):
+    idx_time_last = len(store_boat_info) - 1
+    info_list_end = store_boat_info[idx_time_last]
+    list_coords = [info.state.coords for info in info_list_end]
+    target_distance = calculate_target_distance_list(list_coords, target_coords)
+    idx_winner = np.argmin(target_distance)
+    info_winner = info_list_end[idx_winner]
+    parent_id = info_winner.parent_id
+
+    fastest_route_info = [info_winner]
+    for idx_time in range(idx_time_last - 1, -1, -1):
+        info_list = store_boat_info[idx_time]
+        id_arr = np.array([info.id for info in info_list])
+        idx_parent = np.where(id_arr == parent_id)[0][0]
+        info_parent = info_list[idx_parent]
+        fastest_route_info.append(info_parent)
+
+    fastest_route_info = fastest_route_info[::-1]
+
+    return fastest_route_info
 
 
 # def load_climate_velocity_list(

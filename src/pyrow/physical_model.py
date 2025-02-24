@@ -214,7 +214,7 @@ def solve_boat_velocity(
     orientation: float,
     row: bool,
     force_anchor: bool = False,
-    tol: float = 1e-6,
+    tol: float = 1e-5,
 ) -> tuple[float, float]:
     V_boat_guess = V_water + boat_properties.speed_perfect * np.array(
         [np.cos(orientation), np.sin(orientation)]
