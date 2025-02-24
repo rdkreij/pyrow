@@ -2,9 +2,10 @@ from dataclasses import dataclass
 
 import numpy as np
 import xarray as xr
-from pyproj import Geod
 
 import pyrow.physical_model as physical_model
+import pyrow.spatial_operations as spatial_operations
+import pyrow.wheather_interpolation as wheather_interpolation
 
 
 @dataclass
@@ -26,6 +27,8 @@ class RouteSimulation:
         ds_air: xr.Dataset,
         ds_water: xr.Dataset,
         algorithm: str = "single",
+        interpolation: str = "nearest",
+        finish_time_step_scale: float | None = None,
     ):
         self.boat_properties = boat_properties
         self.start_coords = start_coords
@@ -36,9 +39,37 @@ class RouteSimulation:
         self.ds_air = ds_air
         self.ds_water = ds_water
         self.algortihm = algorithm
+        self.interpolation = interpolation
+        self.finish_time_step_scale = finish_time_step_scale
+
+        if self.finish_time_step_scale is not None:
+            self.finish_zone = (
+                self.finish_time_step_scale
+                * self.boat_properties.speed_perfect
+                * self.time_step
+            )
+        else:
+            self.finish_zone = None
 
         self.store_boat_info = self.run_simulation()
         self.fastest_route_info = self.find_fastest_route_info(self.store_boat_info)
+        if self.interpolation != "zero":
+            for ds in [self.ds_air, self.ds_water]:
+                wheather_interpolation.process_dataset(
+                    ds, {"time", "lon", "lat"}, {"u", "v"}
+                )
+
+    def calculate_time_step_flex(self, target_distance):
+        if self.finish_time_step_scale is not None:
+            if np.any(target_distance <= self.finish_zone):
+                time_step_flex = np.min(target_distance) / (
+                    self.boat_properties.speed_perfect * self.finish_time_step_scale
+                )
+                return min(time_step_flex, self.time_step)
+            else:
+                return self.time_step
+        else:
+            return self.time_step
 
     def run_simulation(self):
         boat_state_start = physical_model.BoatState(self.start_coords, self.start_time)
@@ -53,16 +84,29 @@ class RouteSimulation:
         i = 0
         while np.all(target_distance > self.min_distance_target):
             new_list_boat_info = []
+            time_step_instance = self.calculate_time_step_flex(target_distance)
+            print(time_step_instance)
             id = 0
             for info in list_boat_info:
                 if self.algortihm == "single":
                     info.id = id
-                    info.state.orientation = bearing_east_rad(
+                    info.state.orientation = spatial_operations.bearing_east_rad(
                         info.state.coords, self.target_coords
                     )
-                    # TODO update forecast
-                    info.state.V_air = np.array([0, 0])
-                    info.state.V_water = np.array([0, 0])
+                    info.state.V_air = wheather_interpolation.get_velocity_from_dataset(
+                        self.ds_air,
+                        info.state.time,
+                        info.state.coords,
+                        self.interpolation,
+                    )
+                    info.state.V_water = (
+                        wheather_interpolation.get_velocity_from_dataset(
+                            self.ds_water,
+                            info.state.time,
+                            info.state.coords,
+                            self.interpolation,
+                        )
+                    )
                     info.state.row = True
                     info.state.V_boat = physical_model.solve_boat_velocity(
                         self.boat_properties,
@@ -72,7 +116,7 @@ class RouteSimulation:
                         row=info.state.row,
                     )
                     new_boat_state = physical_model.move_boat(
-                        info.state, self.time_step
+                        info.state, time_step_instance
                     )
                     new_info = BoatSimInfo(new_boat_state, parent_id=id)
 
@@ -113,30 +157,16 @@ class RouteSimulation:
         return fastest_route_info
 
 
-def bearing_east_rad(coords_1, coords_2):
-    geod = Geod(ellps="WGS84")
-    lon1, lat1 = coords_1
-    lon2, lat2 = coords_2
-    azi_12, _, _ = geod.inv(lon1, lat1, lon2, lat2)
-    theta_east = (90 - azi_12) % 360
-    return np.deg2rad(theta_east)
-
-
 def spatial_filter_radial_list(
     list_coords: list[tuple[float]], target_coords: tuple[float]
 ) -> list[tuple[float]]:
     pass
 
 
-def load_climate_velocity_list(
-    list_coords: list[tuple[float]], ds: xr.Dataset
-) -> list[tuple[float]]:
-    pass
-
-
-def calculate_distance_till_between_points(coords_1, coords_2) -> float:
-    geod = Geod(ellps="WGS84")
-    return geod.inv(coords_1[0], coords_1[1], coords_2[0], coords_2[1])[2]
+# def load_climate_velocity_list(
+#     list_coords: list[tuple[float]], ds: xr.Dataset
+# ) -> list[tuple[float]]:
+#     pass
 
 
 def calculate_target_distance_list(
@@ -144,7 +174,9 @@ def calculate_target_distance_list(
 ) -> np.ndarray:
     return np.array(
         [
-            calculate_distance_till_between_points(coords, target_coords)
+            spatial_operations.calculate_distance_till_between_points(
+                coords, target_coords
+            )
             for coords in list_coords
         ]
     )
@@ -167,12 +199,14 @@ if __name__ == "__main__":
         boat_properties,
         start_coords=(80, 40),
         target_coords=(-80, -40),
-        min_distance_target=1e4,
+        min_distance_target=1e3,
         start_time=np.datetime64("now"),
         time_step=3600,
         ds_air=None,
         ds_water=None,
         algorithm="single",
+        interpolation="zero",
+        finish_time_step_scale=4,
     )
 
     fastest_route_info = route_simulation.fastest_route_info

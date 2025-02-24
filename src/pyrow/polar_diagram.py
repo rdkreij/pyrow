@@ -140,7 +140,7 @@ def plot_polar_diagram(
     n: int = 50,
     medium: str = "air",
     boat_direction: str = "parallel",
-    plot_config: dict = {},
+    plot_config: dict | None = None,
 ) -> Tuple[plt.Figure, plt.Axes]:
     v_medium_perp_mat, v_medium_par_mat, vperp_mat_boat, vpar_mat_boat = (
         calculate_mat_polar_diagram(
@@ -151,6 +151,8 @@ def plot_polar_diagram(
             medium=medium,
         )
     )
+    if plot_config is None:
+        plot_config = {}
 
     if boat_direction == "parallel":
         vdir_mat_boat = vpar_mat_boat
@@ -183,7 +185,7 @@ def plot_polar_diagram_row_rest(
     n: int = 50,
     medium: str = "air",
     boat_direction: str = "parallel",
-    plot_config: dict = {},
+    plot_config: dict | None = None,
 ) -> Tuple[plt.Figure, plt.Axes]:
     v_medium_perp_mat, v_medium_par_mat, vperp_mat_boat, vpar_mat_boat = (
         calculate_boat_velocity_difference_row_rest(
@@ -194,6 +196,8 @@ def plot_polar_diagram_row_rest(
             medium=medium,
         )
     )
+    if plot_config is None:
+        plot_config = {}
 
     if boat_direction == "parallel":
         vdir_mat_boat = vpar_mat_boat

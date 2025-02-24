@@ -3,7 +3,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import scipy
 import scipy.optimize
-from pyproj import Geod
+
+import pyrow.spatial_operations as spatial_operations
 
 
 @dataclass
@@ -237,20 +238,10 @@ def solve_boat_velocity(
     return V_boat_solution.x
 
 
-def displace_coordinates_pyproj(coords, x, y):
-    geod = Geod(ellps="WGS84")
-
-    lon, lat = coords
-    lon_new, lat_new, _ = geod.fwd(lon, lat, 90, x)  # Move east by x meters
-    lon_new, lat_new, _ = geod.fwd(lon_new, lat_new, 0, y)  # Move north by y meters
-
-    return (lon_new, lat_new)
-
-
 def move_boat(boat_state: BoatState, time_step: float) -> BoatState:
     x = boat_state.V_boat[0] * time_step
     y = boat_state.V_boat[1] * time_step
-    new_coords = displace_coordinates_pyproj(boat_state.coords, x, y)
+    new_coords = spatial_operations.displace_coordinates_pyproj(boat_state.coords, x, y)
     new_time = boat_state.time + np.timedelta64(int(time_step), "s")
     return BoatState(coords=new_coords, time=new_time)
 
