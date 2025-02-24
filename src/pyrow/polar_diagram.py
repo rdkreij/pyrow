@@ -232,7 +232,7 @@ if __name__ == "__main__":
         area_air_side=5.81,
         drag_coefficient_air=0.2,
         drag_coefficient_water=0.0075,
-        speed_perfect=4,
+        speed_perfect=2,
         wind_correction={"correction_par": 2, "window_par": 6, "window_perp": 4},
     )
     fig, ax = plot_polar_diagram(

@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import scipy
 import scipy.optimize
-from geopy.distance import geodesic
+from pyproj import Geod
 
 
 @dataclass
@@ -62,8 +62,11 @@ def calculate_row_force_perfect_conditions(
     drag_coefficient_water: float,
     speed_perfect: float,
 ) -> float:
-    drag_air = 0.5 * area_air_front * drag_coefficient_air * speed_perfect**2
-    drag_water = 0.5 * area_water_front * drag_coefficient_water * speed_perfect**2
+    # TODO use drag functions below for this!
+    drag_air = 0.5 * 1.225 * area_air_front * drag_coefficient_air * speed_perfect**2
+    drag_water = (
+        0.5 * 1025 * area_water_front * drag_coefficient_water * speed_perfect**2
+    )
     return drag_air + drag_water
 
 
@@ -234,16 +237,20 @@ def solve_boat_velocity(
     return V_boat_solution.x
 
 
-def displace_coordinates_geopy(coords, x, y):
-    new_point_north = geodesic(meters=y).destination(coords, 0)
-    final_point = geodesic(meters=x).destination(new_point_north, 90)
-    return (final_point.latitude, final_point.longitude)
+def displace_coordinates_pyproj(coords, x, y):
+    geod = Geod(ellps="WGS84")
+
+    lon, lat = coords
+    lon_new, lat_new, _ = geod.fwd(lon, lat, 90, x)  # Move east by x meters
+    lon_new, lat_new, _ = geod.fwd(lon_new, lat_new, 0, y)  # Move north by y meters
+
+    return (lon_new, lat_new)
 
 
 def move_boat(boat_state: BoatState, time_step: float) -> BoatState:
     x = boat_state.V_boat[0] * time_step
     y = boat_state.V_boat[1] * time_step
-    new_coords = displace_coordinates_geopy(boat_state.coords, x, y)
+    new_coords = displace_coordinates_pyproj(boat_state.coords, x, y)
     new_time = boat_state.time + np.timedelta64(int(time_step), "s")
     return BoatState(coords=new_coords, time=new_time)
 
@@ -255,7 +262,7 @@ if __name__ == "__main__":
         time=np.datetime64("now"),
         V_boat=np.array([0, 0]),
         V_air=np.array([0, 0]),
-        V_water=np.array([4, 0]),
+        V_water=np.array([0, 0]),
         row=True,
     )
     print(boat_state)

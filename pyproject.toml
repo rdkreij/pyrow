@@ -1,0 +1,22 @@
+[project]
+name = "pyrow"
+version = "0.1.0"
+description = "Python package for simulating ocean rows with a physical model, optimizing routes based on currents and winds."
+authors = [
+    {name = "Rick de Kreij",email = "r.d.kreij@gmail.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy (>=2.2.3,<3.0.0)",
+    "matplotlib (>=3.10.0,<4.0.0)",
+    "scipy (>=1.15.2,<2.0.0)",
+    "xarray (>=2025.1.2,<2026.0.0)",
+    "pyproj (>=3.7.1,<4.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
