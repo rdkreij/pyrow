@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 import xarray as xr
 
+import pyrow.load_dataset as load_dataset
 import pyrow.physical_model as physical_model
 import pyrow.spatial_operations as spatial_operations
 import pyrow.wheather_interpolation as wheather_interpolation
@@ -29,6 +30,7 @@ class RouteSimulation:
         algorithm: str = "single",
         algorithm_options: dict | None = None,
         interpolation: str = "nearest",
+        interpolation_options: dict | None = None,
         filter: str | None = None,
         filter_options: dict | None = None,
         finish_time_step_scale: float | None = None,
@@ -44,12 +46,16 @@ class RouteSimulation:
         self.algortihm = algorithm
         self.algortihm_options = algorithm_options
         self.interpolation = interpolation
+        self.interpolation_options = interpolation_options
         self.filter = filter
         self.filter_options = filter_options
         self.finish_time_step_scale = finish_time_step_scale
 
         if self.filter_options is None:
             self.filter_options = {}
+
+        if self.interpolation_options is None:
+            self.interpolation_options = {}
 
         if self.algortihm_options is None:
             self.algortihm_options = {}
@@ -135,12 +141,14 @@ class RouteSimulation:
                 info.state.time,
                 info.state.coords,
                 self.interpolation,
+                self.interpolation_options,
             )
             info.state.V_water = wheather_interpolation.get_velocity_from_dataset(
                 self.ds_water,
                 info.state.time,
                 info.state.coords,
                 self.interpolation,
+                self.interpolation_options,
             )
             info.state.row = True
             info.state.V_boat = physical_model.solve_boat_velocity(
@@ -152,7 +160,6 @@ class RouteSimulation:
             )
             new_boat_state = physical_model.move_boat(info.state, time_step_instance)
             new_info = BoatSimInfo(new_boat_state, parent_id=id)
-
             id += 1
             new_list_boat_info.append(new_info)
         return new_list_boat_info
@@ -214,41 +221,49 @@ def calculate_target_distance_list(
 
 
 if __name__ == "__main__":
-    boat_properties = physical_model.BoatProperties(
-        area_anchor=6,
-        area_water_front=0.329,
-        area_water_side=1.87 + 0.196 + 0.184,
-        area_air_front=1.89,
-        area_air_side=5.81,
-        drag_coefficient_air=0.2,
-        drag_coefficient_water=0.0075,
-        speed_perfect=4,
-        wind_correction={"correction_par": 2, "window_par": 6, "window_perp": 4},
+    import pyrow.config as config
+    import pyrow.route_plot as route_plot
+
+    boat_properties = config.BOAT_PROPERTIES
+    ds_air = load_dataset.load_air_dataset(
+        "data/CERSAT-GLO-REP_WIND_L4-OBS_FULL_TIME_SERIE_1648775425193.nc"
     )
+    ds_water = load_dataset.load_water_dataset("data/nemo_monthly_mean.nc")
 
     route_simulation = RouteSimulation(
         boat_properties,
-        start_coords=(80, 40),
-        target_coords=(-80, -40),
-        min_distance_target=1e3,
-        start_time=np.datetime64("now"),
+        start_coords=config.START_COORDS["Fremantle"],
+        target_coords=config.TARGET_COORDS["North Madagascar"],
+        min_distance_target=1e4,
+        start_time=np.datetime64("2009-06-01T12:00:00"),
         time_step=3600,
-        ds_air=None,
-        ds_water=None,
+        ds_air=ds_air,
+        ds_water=ds_water,
         algorithm="single",
-        interpolation="zero",
+        interpolation="nearest",
+        interpolation_options={"ignore_nan": True},
         finish_time_step_scale=4,
     )
 
     fastest_route_info = route_simulation.fastest_route_info
     coords_list = [info.state.coords for info in fastest_route_info]
+    time = np.array([info.state.time for info in fastest_route_info])
+    print((time[-1] - time[0]) // np.timedelta64(1, "D"))
     lon = [i[0] for i in coords_list]
     lat = [i[1] for i in coords_list]
 
-    print(len(coords_list))
-
     import matplotlib.pyplot as plt
+    import cartopy.crs as ccrs
 
-    fig, ax = plt.subplots()
-    ax.plot(lon, lat)
+    fig, ax = route_plot.plot_cartopy_globe(
+        show_image=True,
+        focus_coords=(75, -10),
+        extent=[20, 130, -40, +0],
+        grid_color="r",
+        background_color="k",
+    )
+    ax.plot(lon, lat, "r-", transform=ccrs.PlateCarree())
+
+    # fig, ax = plt.subplots()
+    # ax.plot(lon, lat)
     plt.show()

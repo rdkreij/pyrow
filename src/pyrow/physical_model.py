@@ -20,6 +20,7 @@ class BoatProperties:
     speed_perfect: float
     force_row: float = field(init=False)
     wind_correction: None | dict = None
+    drag_air_only_parallel: bool = False
     # min_anchor_speed: None | float = None
 
     def __post_init__(self):
@@ -90,19 +91,25 @@ def calculate_drag_air(
     effective_area = calculate_effective_area(
         boat_properties.area_air_front, boat_properties.area_air_side, heading_reference
     )
-    # drag_force = (
-    #     0.5 * 1.225 * boat_properties.drag_coefficient_air * speed_relative**2 * effective_area
-    # )
-    # drag_parallel = drag_force * np.cos(heading_reference)
 
-    # return drag_parallel * np.array([np.cos(orientation), np.sin(orientation)])
-    return (
-        0.5
-        * 1.225
-        * boat_properties.drag_coefficient_air
-        * speed_relative**2
-        * effective_area
-    ) * np.array([np.cos(heading_relative), np.sin(heading_relative)])
+    if boat_properties.drag_air_only_parallel:
+        drag_force = (
+            0.5
+            * 1.225
+            * boat_properties.drag_coefficient_air
+            * speed_relative**2
+            * effective_area
+        )
+        drag_parallel = drag_force * np.cos(heading_reference)
+        return drag_parallel * np.array([np.cos(orientation), np.sin(orientation)])
+    else:
+        return (
+            0.5
+            * 1.225
+            * boat_properties.drag_coefficient_air
+            * speed_relative**2
+            * effective_area
+        ) * np.array([np.cos(heading_relative), np.sin(heading_relative)])
 
 
 def calculate_drag_water(

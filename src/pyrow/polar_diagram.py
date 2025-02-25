@@ -228,17 +228,10 @@ def plot_polar_diagram_row_rest(
 
 
 if __name__ == "__main__":
-    boat_properties = physical_model.BoatProperties(
-        area_anchor=6,
-        area_water_front=0.329,
-        area_water_side=1.87 + 0.196 + 0.184,
-        area_air_front=1.89,
-        area_air_side=5.81,
-        drag_coefficient_air=0.2,
-        drag_coefficient_water=0.0075,
-        speed_perfect=2,
-        wind_correction={"correction_par": 2, "window_par": 6, "window_perp": 4},
-    )
+    import pyrow.config as config
+
+    boat_properties = config.BOAT_PROPERTIES
+
     fig, ax = plot_polar_diagram(
         boat_properties, medium="air", boat_direction="parallel"
     )
