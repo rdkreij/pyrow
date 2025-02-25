@@ -7,3 +7,5 @@ To-do list
 - [ ] Notebook for simulation
 - [ ] Radial spatial filtering
 - [ ] Multi option simulation
+- [ ] Flag missing wind or current data
+- [ ] Flag when not able to row
